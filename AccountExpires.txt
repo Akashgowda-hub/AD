@@ -1,0 +1,13 @@
+This cmd will export all user account Expires in AD.
+
+
+Get-ADUser -Filter * -Properties AccountExpirationDate | Select-Object SAMAccountName, @{
+         Name = 'AccountExpiration';
+         Expression = {
+             if ($null -eq $_.AccountExpirationDate) {
+                 'Never Expires'
+             } else {
+                 $_.AccountExpirationDate
+             }
+         }
+     } | Export-Csv -Path 'C:\Test\accountexpires.csv' –notypeinformation

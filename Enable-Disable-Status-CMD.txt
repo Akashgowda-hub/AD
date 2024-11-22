@@ -1,0 +1,5 @@
+This cmd which help to chcek the User Object Status - Enable or Disabled in ActiveDirectory
+
+Import-Module ActiveDirectory
+$users = Get-ADUser -Filter * -Properties SamAccountName,userPrincipalName,Enabled
+$users | Select-Object SamAccountName, @{Name="Status";Expression={if ($_.Enabled) {"Enabled"} else {"Disabled"}}} | Export-Csv -Path 'C:\Test\UserList.csv' -NoTypeInformation

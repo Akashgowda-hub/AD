@@ -1,0 +1,133 @@
+***DL Open to all check:***
+
+Download DL name List
+place all under Test.txt file will return DL name if there is any in list
+
+Import-Module ActiveDirectory
+# Path to the file containing the list of distribution groups
+$listFilePath = "C:\Test.txt"
+$DistributionGroups = Get-Content $listFilePath
+foreach ($GroupName in $DistributionGroups) {
+    # Get the distribution group object
+    $DistributionGroup = Get-ADGroup -Identity $GroupName -Properties authorig -ErrorAction SilentlyContinue
+    
+    # Check if the distribution group object exists and if the authorig attribute is empty or not set
+    if ($DistributionGroup -ne $null -and -not $DistributionGroup.authorig) {
+        Write-Host "$($DistributionGroup.Name)"
+    }
+}
+
+
+***DL count :***
+Get-ADGroupMember -Identity "ABDC GROUP" | Measure-Object | Select-Object -ExpandProperty Count
+
+***DL count for all***
+Get-ADGroup -Filter {GroupCategory -eq "Distribution"} | Measure-Object
+
+
+***DL members export:***
+Import-Module ActiveDirectory
+Get-ADGroupMember -Identity "ABDC GROUP" | Select-Object Name, SamAccountName, ObjectClass | Export-Csv -Path "C:\Test\GroupMembers.csv" -NoTypeInformation
+
+
+***DL group to group resc:***
+Set-ADObject "CN=BARD GROUP,OU=DLS,OU=Groups,DC=bard,DC=com" -Add @{dLMemSubmitPerms="CN=ABCD GROUP,OU=Distribution Groups,OU=Groups,DC=bard,DC=com"}
+
+
+***DL restriction: (RequireSenderAuthenticationEnabled)***
+
+Set-DistributionGroup -Identity "YourDistributionListName" -msExchRequireAuthToSendTo $true
+#where True is Internal , False is Internal & External
+
+
+***DL restriction data fetch:(msExchRequireAuthToSendTo ):***
+
+# Import the necessary module
+Import-Module ActiveDirectory
+# Get all distribution groups
+$DistributionGroups = Get-ADGroup -Filter {GroupCategory -eq "Distribution"} -Properties msExchRequireAuthToSendTo, SamAccountName
+# Initialize an array to hold the results
+$Results = @()
+foreach ($DistributionGroup in $DistributionGroups) {
+    # Get the value of the msExchRequireAuthToSendTo attribute
+    $requireAuthToSendTo = $DistributionGroup.msExchRequireAuthToSendTo
+
+    # Determine the value of the msExchRequireAuthToSendTo attribute
+    if ($requireAuthToSendTo -eq $null) {
+        $authValue = "None"-
+    } elseif ($requireAuthToSendTo -eq $true) {
+        $authValue = "True"
+    } elseif ($requireAuthToSendTo -eq $false) {
+        $authValue = "False"
+    }
+
+    # Add the result to the array
+    $Results += [PSCustomObject]@{
+        SamAccountName = $DistributionGroup.SamAccountName
+        AuthRequired   = $authValue
+    }
+}
+# Path to export the CSV file
+$exportPath = "C:\Test\msExchRequireAuthToSendTo.csv"
+# Export the results to a CSV file
+$Results | Export-Csv -Path $exportPath -NoTypeInformation
+Write-Host "Results exported to $exportPath"
+
+
+***Export DL name with manager name and member count:***
+# Define the output file path
+$outputFile = "DistributionListsWithManagersAndMembersCount.csv"
+# Get the distribution lists with their managers and member count
+$distributionLists = Get-ADGroup -Filter {GroupCategory -eq "Distribution"} -Properties ManagedBy, Members | ForEach-Object {
+    # Get the manager's name if the ManagedBy property is not empty
+    if ($_.ManagedBy) {
+        $manager = Get-ADUser -Identity $_.ManagedBy -Properties DisplayName
+        $managerName = $manager.DisplayName
+    } else {
+        $managerName = "No Manager"
+    }
+    # Get the count of members
+    $memberCount = ($_.Members).Count
+
+    [PSCustomObject]@{
+        DistributionListName = $_.Name
+        ManagerName = $managerName
+        MemberCount = $memberCount
+    }
+}
+# Export the results to a CSV file
+$distributionLists | Export-Csv -Path $outputFile -NoTypeInformation
+Write-Host "Export completed. The file is located at $outputFile"
+
+***LastLogon in AD:***
+
+# Import the Active Directory module
+Import-Module ActiveDirectory
+# Define the output CSV file path
+$outputFile = "C:\Test\ADUserLastLogon.csv"
+# Get all users from Active Directory
+$users = Get-ADUser -Filter * -Property DisplayName, LastLogonDate, SamAccountName
+# Create an array to hold user data
+$userData = @()
+# Loop through each user and select necessary properties
+foreach ($user in $users) {
+    # Check if LastLogonDate is null and set a default value if it is
+    $lastLogon = if ($user.LastLogonDate) { $user.LastLogonDate } else { "Never Logged On" }
+    
+    $userData += [PSCustomObject]@{
+        DisplayName    = $user.DisplayName
+        LastLogonDate  = $lastLogon
+        SamAccountName = $user.SamAccountName
+    }
+}
+# Export the user data to CSV
+$userData | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+Write-Host "Export completed successfully. File saved to $outputFile"
+
+
+***Hostentry delete using CMD:***
+Remove-ADComputer -Identity "ComputerName" -Confirm:$false
+
+
+***LastPassword set:***
+Get-ADUser -Filter {enabled -eq $true} -Properties pwdLastSet | Select-Object Name,@{Name="Stamp"; Expression={[DateTime]::FromFileTime($_.pwdLastSet).ToString('yyyy-MM-dd_hh:mm:ss')}} | Export-Csv -Path 'C:\Lastpwdset.csv' -notypeinformation

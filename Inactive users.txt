@@ -1,0 +1,50 @@
+Inactive user CMD
+Note: Inactive user who lies in criteria-
+users who have never logged in and whose creation date is more than 30 days ago, as well as users who have logged in but their last login was more than 30 days ago.
+
+
+# Import the Active Directory module
+Import-Module ActiveDirectory
+
+# Get the current date
+$CurrentDate = Get-Date
+
+# Define the number of inactivity days
+$InactiveDays = 30
+
+# Define the path to export the CSV file
+$ExportPath = "C:\InactiveUsers.csv"
+
+# Get all AD users with their LastLogonDate and WhenCreated properties
+$AllUsers = Get-ADUser -Filter * -Properties LastLogonDate, WhenCreated, SamAccountName
+
+# Initialize an empty array to store the inactive users
+$InactiveUsers = @()
+
+foreach ($User in $AllUsers) {
+    # Check if the user has never logged in
+    if ($User.LastLogonDate -eq $null) {
+        # Calculate the days since account creation
+        $DaysSinceCreation = ($CurrentDate - $User.WhenCreated).Days
+        
+        # Check if the user was created more than 30 days ago
+        if ($DaysSinceCreation -gt $InactiveDays) {
+            # Add the user to the array
+            $InactiveUsers += $User
+        }
+    } else {
+        # Calculate the days since last logon
+        $DaysSinceLastLogon = ($CurrentDate - $User.LastLogonDate).Days
+
+        # Check if the user has not logged in for more than 30 days
+        if ($DaysSinceLastLogon -gt $InactiveDays) {
+            # Add the user to the array
+            $InactiveUsers += $User
+        }
+    }
+}
+
+# Export the users to a CSV file
+$InactiveUsers | Select-Object SamAccountName, LastLogonDate, WhenCreated | Export-Csv -Path $ExportPath -NoTypeInformation
+
+Write-Output "Exported $(($InactiveUsers).Count) inactive users to $ExportPath"

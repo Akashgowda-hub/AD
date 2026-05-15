@@ -1,0 +1,132 @@
+foreach ($ou in $ouList) {
+    Write-Log "Processing OU: $ou" $logFilePath
+   $users = Get-ADUser -Filter * -SearchBase $ou -Properties LastLogontimestamp, Manager, Enabled, UserPrincipalName, DisplayName, WhenCreated, mail -ResultPageSize 1000
+        if ($users.Count -eq 0) {
+            Write-Log "No users found in OU: $ou" $logFilePath
+            continue
+        }
+        foreach ($user in $users) {
+            Write-Log "Processing user: $($user.SamAccountName)" $logFilePath
+
+            # Get the most recent LastLogon from AD
+            $lastLogon = Get-LastLogon -userName $user.SamAccountName -logFilePath $logFilePath
+            #Write-Log "Latest logon date for user $lastLogon" $logFilePath
+            #$lastLogonString = if ($lastLogon) { $lastLogon.ToString("yyyy-MM-dd") } else { "Never" }
+
+            # Find the user in Azure AD
+            $azureADUser = $allAzureADUsers | Where-Object { $_.userPrincipalName -eq $user.UserPrincipalName }
+            if (-not $azureADUser) {
+                Write-Warning "Could not find user $($user.UserPrincipalName) in Azure AD. Skipping..."
+                Write-Log "Could not find user $($user.UserPrincipalName) in Azure AD. Skipping..." $logFilePath
+                continue
+            }
+
+            $userId = $azureADUser.id
+
+            # Get last sign-in from Azure AD
+            $lastSignInDate = Get-UserLastSignIn -userId $userId -headers $headers -logFilePath $logFilePath
+            #$lastSignInString = if ($lastSignInDate) { $lastSignInDate.ToString("yyyy-MM-dd") } else { "Never" }
+
+            # Prepare for manager check
+            if ($user.Manager) {    
+                $manager = Get-ADUser -Identity $user.Manager -Properties EmailAddress -ErrorAction SilentlyContinue     
+                $managerEmailAvailable = if ($manager -and $manager.EmailAddress) { $true } else { $false }
+            } else {
+                $manager = "N/A"
+                $managerEmailAvailable = $false
+            }
+
+            # Initialize variables
+            $mailSentToUser = "N/A"
+            $mailSentToManager = "N/A"
+            $sessionRevoked = $false
+            $action = ""
+
+            # Check the last logon and sign-in dates for inactivity 
+            if (($lastLogon -eq $cutOffDate10Days -and (-not $lastSignInDate)) -or ($lastLogon -eq $cutOffDate10Days -and $lastSignInDate -eq $cutOffDate10Days)) {
+            # Condition 1: Between 10 and 15 days of inactivity     
+            $action = "Notification sent, (10 days of inactivity)"   
+            Send-Notification -userEmail $user.mail -userDisplayName $user.DisplayName -managerEmail $manager.EmailAddress -managerDisplayName $manager.Name -logFilePath $logFilePath     
+            $mailSentToUser = "True"    
+            $mailSentToManager = if ($managerEmailAvailable) { "True" } else { "False" } 
+            } 
+            
+            # Check if user creation is greater than 15 days, and last logon/sign-in is blank 
+            elseif ($user.WhenCreated -lt $cutOffDate15Days -and -not $lastLogon -and -not $lastSignInDate) { 
+            # Condition 2: No logons and account older than 15 days     (($lastLogon -eq $cutOffDate10Days -and (-not $lastSignInDate)) -or ($lastLogon -eq $cutOffDate10Days -and $lastSignInDate -eq $cutOffDate10Days))
+            #9 Disable-ADAccount -Identity $user.SamAccountName     
+            $sessionRevoked = $true
+            #10 Revoke-UserSession -UserPrincipalName $userId  
+            Write-Log "Session has been Revoked fro  $userId"   
+            $action = "Notification sent, Account disabled due to no logons for 15+ days"     
+            Send-DisableNotification -userEmail $user.mail -userDisplayName $user.DisplayName -managerEmail $manager.EmailAddress -managerDisplayName $manager.Name -logFilePath $logFilePath     
+            $mailSentToUser = "True"     
+            $mailSentToManager = if ($managerEmailAvailable) { "True" } else { "False" } 
+            } 
+            
+
+
+            # Check the last logon and sign-in dates for inactivity 
+            elseif (($lastLogon -ge $cutOffDate10Days -and $lastLogon -le $cutOffDate15Days) -or ($lastSignInDate -ge $cutOffDate10Days -and $lastSignInDate -le $cutOffDate15Days)) {
+            # Condition 1: Between 10 and 15 days of inactivity     
+            $action = "Notification sent, (10-15 days of inactivity)"     
+            Send-Notification -userEmail $user.mail -userDisplayName $user.DisplayName -managerEmail $manager.EmailAddress -managerDisplayName $manager.Name -logFilePath $logFilePath     
+            $mailSentToUser = "True"    
+            $mailSentToManager = if ($managerEmailAvailable) { "True" } else { "False" } 
+            } 
+            
+            # Check if user creation is greater than 15 days, and last logon/sign-in is blank 
+            elseif ($user.WhenCreated -lt $cutOffDate15Days -and -not $lastLogon -and -not $lastSignInDate) { 
+            # Condition 2: No logons and account older than 15 days     
+            #13 Disable-ADAccount -Identity $user.SamAccountName     
+            $sessionRevoked = $true
+            #14 Revoke-UserSession -UserPrincipalName $userId 
+            Write-Log "Session has been Revoked fro  $userId"    
+            $action = "Notification sent, Account disabled due to no logons for 15+ days"     
+            Send-DisableNotification -userEmail $user.mail -userDisplayName $user.DisplayName -managerEmail $manager.EmailAddress -managerDisplayName $manager.Name -logFilePath $logFilePath     
+            $mailSentToUser = "True"     
+            $mailSentToManager = if ($managerEmailAvailable) { "True" } else { "False" } 
+            } 
+            
+            
+            elseif (($lastLogon -lt $cutOffDate15Days -or $lastLogon -eq $null) -and ($lastSignInDate -lt $cutOffDate15Days -or $lastSignInDate -eq $null) -and $user.WhenCreated -lt $cutOffDate15Days) {
+                # Condition 4: Disable users with logon/sign-in older than 15 days
+                #16 Disable-ADAccount -Identity $user.SamAccountName
+                $sessionRevoked = $true
+                #17 Revoke-UserSession -UserPrincipalName $userId
+                Write-Log "Session has been Revoked for  $userId"
+                $action = "Notification sent, Account disabled due to inactivity (logon/sign-in older than 15 days)"
+                Send-DisableNotification -userEmail $user.mail -userDisplayName $user.DisplayName -managerEmail $manager.EmailAddress -managerDisplayName $manager.Name -logFilePath $logFilePath
+                $mailSentToUser = "True"
+                $mailSentToManager = if ($managerEmailAvailable) { "True" } else { "False" }
+                }
+
+            # Default condition: No action taken for users who don't meet any of the above conditions 
+            else {
+             # Condition 5: No action taken     
+             $action = "No action taken"     
+             $mailSentToUser = "N/A"     
+             $mailSentToManager = "N/A" }
+
+            # Set MailSentToUser and MailSentToManager to "N/A" if notifications were not sent
+            if ($action -notlike "*Notification sent*") {
+                $mailSentToUser = "N/A"
+                $mailSentToManager = "N/A"
+            }
+
+
+            # Collect data for the CSV report
+            $csvData += [pscustomobject]@{
+                samAccountName      = $user.SamAccountName
+                DisplayName         = $user.DisplayName
+                Manager             = $manager.SamAccountName
+                MailSentToUser      = $mailSentToUser
+                MailSentToManager   = $mailSentToManager
+                LastLogonOnPrem     = $lastLogon
+                LastLogonAzureAD    = $lastSignInDate
+                CreationDate        = $user.WhenCreated.ToString("yyyy-MM-dd HH:mm:ss")
+                SessionRevoked      = $sessionRevoked
+                Action              = $action
+            }
+        }
+    }
